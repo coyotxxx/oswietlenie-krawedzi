@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Krawędzie</string>
+    <string name="opis_uslugi">Rysuje świetlną ramkę wokół ekranu przy powiadomieniach i dzwonieniu, także nad ekranem blokady. Aplikacja nie czyta zawartości ekranu.</string>
+</resources>
