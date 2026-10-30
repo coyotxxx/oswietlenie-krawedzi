@@ -90,13 +90,36 @@ private fun Aplikacja(magazyn: Magazyn) {
         if (!(uprawnienia.first && uprawnienia.second) && ekran == Ekran.GLOWNY) ekran = Ekran.UPRAWNIENIA
     }
 
+    // Aktualizacje z GitHuba: sprawdzamy raz przy starcie, ręcznie — przyciskiem na dole.
+    var aktualizacja by remember { mutableStateOf<UpdateInfo?>(null) }
+    var postep by remember { mutableStateOf<UpdateProgress>(UpdateProgress.Idle) }
+    var sprawdzono by remember { mutableStateOf(false) }
+    val sprawdz: () -> Unit = {
+        if (postep !is UpdateProgress.Checking && postep !is UpdateProgress.Downloading) zakres.launch {
+            postep = UpdateProgress.Checking
+            aktualizacja = Updater.check(BuildConfig.VERSION_NAME)
+            postep = UpdateProgress.Idle
+            sprawdzono = true
+        }
+    }
+    LaunchedEffect(Unit) { sprawdz() }
+    val instaluj: () -> Unit = {
+        aktualizacja?.let { info ->
+            zakres.launch { Updater.downloadAndInstall(ctx, info) { postep = it } }
+        }
+    }
+    // Wróciliśmy z instalatora albo z ustawienia „instaluj nieznane aplikacje” — pasek znów aktywny.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        if (postep is UpdateProgress.Installing) postep = UpdateProgress.Idle
+    }
+
     val ust = u ?: return
     val zapisz: (Ustawienia) -> Unit = { nowe -> zakres.launch { magazyn.zapisz(nowe) } }
     BackHandler(enabled = ekran != Ekran.GLOWNY) { ekran = Ekran.GLOWNY }
 
     Box(Modifier.fillMaxSize().background(Tlo)) {
         when (ekran) {
-            Ekran.GLOWNY -> Glowny(ust, uprawnienia, zapisz) { ekran = it }
+            Ekran.GLOWNY -> Glowny(ust, uprawnienia, zapisz, StanAktualizacji(aktualizacja, postep, sprawdzono, sprawdz, instaluj)) { ekran = it }
             Ekran.STYL -> EdytorStylu(ust.styl, onAnuluj = { ekran = Ekran.GLOWNY }) {
                 zapisz(ust.copy(styl = it)); ekran = Ekran.GLOWNY
             }
@@ -109,7 +132,10 @@ private fun Aplikacja(magazyn: Magazyn) {
 // ───────────────────────── Ekran główny ─────────────────────────
 
 @Composable
-private fun Glowny(u: Ustawienia, upr: Triple<Boolean, Boolean, Boolean>, zapisz: (Ustawienia) -> Unit, idz: (Ekran) -> Unit) {
+private fun Glowny(
+    u: Ustawienia, upr: Triple<Boolean, Boolean, Boolean>, zapisz: (Ustawienia) -> Unit,
+    akt: StanAktualizacji, idz: (Ekran) -> Unit
+) {
     val ctx = LocalContext.current
     var komunikat by remember { mutableStateOf<String?>(null) }
     Column(
@@ -120,6 +146,8 @@ private fun Glowny(u: Ustawienia, upr: Triple<Boolean, Boolean, Boolean>, zapisz
             Text("Oświetlenie krawędzi", color = Tekst, fontSize = 28.sp, fontWeight = FontWeight.ExtraBold)
             Text("Ramka świetlna przy powiadomieniach i dzwonieniu", color = Szary, fontSize = 14.sp)
         }
+
+        akt.info?.let { PasekAktualizacji(it, akt.postep, akt.instaluj) }
 
         Row(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp))
@@ -182,6 +210,72 @@ private fun Glowny(u: Ustawienia, upr: Triple<Boolean, Boolean, Boolean>, zapisz
             colors = ButtonDefaults.buttonColors(containerColor = Akcent, contentColor = Color.White)
         ) { Text("Pokaż próbne powiadomienie", fontSize = 16.sp, fontWeight = FontWeight.Bold) }
         komunikat?.let { Text(it, color = Color(0xFFFFB020), fontSize = 14.sp) }
+
+        WierszWersji(akt)
+    }
+}
+
+private class StanAktualizacji(
+    val info: UpdateInfo?, val postep: UpdateProgress, val sprawdzono: Boolean,
+    val sprawdz: () -> Unit, val instaluj: () -> Unit
+)
+
+/** Pasek „dostępna aktualizacja” na górze ekranu głównego. Znika, gdy nie ma czego instalować. */
+@Composable
+private fun PasekAktualizacji(info: UpdateInfo, postep: UpdateProgress, instaluj: () -> Unit) {
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(Color(0xFF10261C))
+            .border(1.dp, Color(0xFF1E5A3D), RoundedCornerShape(22.dp)).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Dostępna aktualizacja ${info.version}", color = Tekst, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    when (postep) {
+                        is UpdateProgress.Downloading -> "pobieram… ${postep.percent} %"
+                        UpdateProgress.Installing -> "otwieram instalator…"
+                        is UpdateProgress.Failed -> postep.message
+                        else -> "masz ${BuildConfig.VERSION_NAME}" + if (info.sizeBytes > 0) " · ${info.sizeBytes / 1_048_576} MB" else ""
+                    },
+                    color = if (postep is UpdateProgress.Failed) Color(0xFFFFB020) else Szary, fontSize = 13.sp
+                )
+            }
+            val zajety = postep is UpdateProgress.Downloading || postep == UpdateProgress.Installing
+            Button(
+                onClick = instaluj, enabled = !zajety, shape = CircleShape,
+                colors = ButtonDefaults.buttonColors(containerColor = Ok, contentColor = Tlo)
+            ) { Text("Aktualizuj", fontWeight = FontWeight.Bold) }
+        }
+        if (postep is UpdateProgress.Downloading) LinearProgressIndicator(
+            progress = { postep.percent / 100f }, modifier = Modifier.fillMaxWidth(), color = Ok, trackColor = Color(0xFF1E5A3D)
+        )
+        if (info.notes.isNotBlank()) Text(info.notes, color = Szary, fontSize = 13.sp, maxLines = 6)
+    }
+}
+
+/** Wersja aplikacji i ręczne sprawdzenie aktualizacji — na samym dole ekranu głównego. */
+@Composable
+private fun WierszWersji(akt: StanAktualizacji) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).clickable(onClick = akt.sprawdz)
+            .padding(horizontal = 4.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Wersja ${BuildConfig.VERSION_NAME}", color = Szary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            Text(
+                when {
+                    akt.postep == UpdateProgress.Checking -> "sprawdzam…"
+                    akt.info != null -> "jest nowsza: ${akt.info.version}"
+                    akt.sprawdzono && Updater.ostatnioBlad -> "nie udało się sprawdzić — brak internetu?"
+                    akt.sprawdzono -> "masz najnowszą"
+                    else -> "aktualizacje z GitHuba"
+                },
+                color = Color(0xFF6E7681), fontSize = 13.sp
+            )
+        }
+        Text("Sprawdź", color = Akcent, fontSize = 14.sp, fontWeight = FontWeight.Bold)
     }
 }
 

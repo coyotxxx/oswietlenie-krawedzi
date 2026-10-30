@@ -5,6 +5,9 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Prośba o „bateria bez ograniczeń", żeby Android nie usypiał nasłuchu -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Aktualizacje z wydań na GitHubie -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- Lista aplikacji do wyboru (Android 11+ ukrywa je bez tego) -->
     <queries>
@@ -31,6 +34,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Przekazuje pobrany APK systemowemu instalatorowi -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
         <!-- Dowiaduje się o powiadomieniach i dzwonieniu -->
         <service
