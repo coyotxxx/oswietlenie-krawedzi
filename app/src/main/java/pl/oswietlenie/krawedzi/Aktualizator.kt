@@ -6,7 +6,8 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import android.util.Log
-import androidx.core.content.FileProvider
+import android.app.PendingIntent
+import android.content.pm.PackageInstaller
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -142,15 +143,38 @@ object Updater {
         }
 
         onProgress(UpdateProgress.Installing)
-        val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", file)
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "application/vnd.android.package-archive")
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        return runCatching { ctx.startActivity(intent); true }.getOrElse {
+        return runCatching { zainstaluj(ctx, file); true }.getOrElse {
             Log.e(TAG, "instalator nie wystartował", it)
             onProgress(UpdateProgress.Failed("Nie udało się uruchomić instalatora"))
             false
+        }
+    }
+
+    /**
+     * Instalacja przez sesję [PackageInstaller], nie przez „otwórz plik APK”.
+     * Android 13+ traktuje APK otwarty z pliku jako „nieznane źródło”: po każdej
+     * aktualizacji na nowo blokuje ustawienia z ograniczeniami i WYŁĄCZA usługę ułatwień
+     * dostępu — ramka gasła po aktualizacji. Sesja z innym źródłem niż plik tego nie robi.
+     */
+    private fun zainstaluj(ctx: Context, plik: File) {
+        val instalator = ctx.packageManager.packageInstaller
+        val parametry = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
+            setAppPackageName(ctx.packageName)
+            setSize(plik.length())
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+                setPackageSource(PackageInstaller.PACKAGE_SOURCE_OTHER)
+        }
+        val id = instalator.createSession(parametry)
+        instalator.openSession(id).use { sesja ->
+            sesja.openWrite("krawedzie.apk", 0, plik.length()).use { out ->
+                plik.inputStream().use { it.copyTo(out) }
+                sesja.fsync(out)
+            }
+            val zwrot = PendingIntent.getBroadcast(
+                ctx, id, Intent(ctx, OdbiorcaInstalacji::class.java),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+            )
+            sesja.commit(zwrot.intentSender)
         }
     }
 

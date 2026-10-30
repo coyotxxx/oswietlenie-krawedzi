@@ -35,16 +35,10 @@
             </intent-filter>
         </activity>
 
-        <!-- Przekazuje pobrany APK systemowemu instalatorowi -->
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.fileprovider"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/file_paths" />
-        </provider>
+        <!-- Wynik instalacji aktualizacji (sesja PackageInstaller) -->
+        <receiver
+            android:name=".OdbiorcaInstalacji"
+            android:exported="false" />
 
         <!-- Dowiaduje się o powiadomieniach i dzwonieniu -->
         <service
