@@ -52,7 +52,7 @@ private val AkcentTlo = Color(0xFF13264A)
 private val Ok = Color(0xFF4FD18B)
 private val Wylaczony = Color(0xFF3A404B)
 
-private enum class Ekran { GLOWNY, STYL, APLIKACJE, UPRAWNIENIA }
+private enum class Ekran { GLOWNY, STYL, APLIKACJE, UPRAWNIENIA, DZIENNIK }
 
 private val PALETA = listOf(
     0xFF3D9BFF, 0xFFFF5C8A, 0xFFFF3B3B, 0xFFFF8A1F, 0xFFA6E05A, 0xFF2ED69B,
@@ -125,6 +125,7 @@ private fun Aplikacja(magazyn: Magazyn) {
             }
             Ekran.APLIKACJE -> WyborAplikacji(ust, zapisz) { ekran = Ekran.GLOWNY }
             Ekran.UPRAWNIENIA -> EkranUprawnien(uprawnienia) { ekran = Ekran.GLOWNY }
+            Ekran.DZIENNIK -> EkranDziennika { ekran = Ekran.GLOWNY }
         }
     }
 }
@@ -212,6 +213,47 @@ private fun Glowny(
         komunikat?.let { Text(it, color = Color(0xFFFFB020), fontSize = 14.sp) }
 
         WierszWersji(akt)
+        Row(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).clickable { idz(Ekran.DZIENNIK) }
+                .padding(horizontal = 4.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Dziennik zdarzeń", color = Szary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                Text("co przyszło i dlaczego ramka zaświeciła lub nie", color = Color(0xFF6E7681), fontSize = 13.sp)
+            }
+            Text("›", color = Szary, fontSize = 22.sp)
+        }
+    }
+}
+
+// ───────────────────────── Dziennik ─────────────────────────
+
+@Composable
+private fun EkranDziennika(wstecz: () -> Unit) {
+    val ctx = LocalContext.current
+    var wpisy by remember { mutableStateOf(Dziennik.lista(ctx)) }
+    LaunchedEffect(Unit) {
+        while (true) { kotlinx.coroutines.delay(1000); wpisy = Dziennik.lista(ctx) }
+    }
+    Column(Modifier.fillMaxSize().systemBarsPadding().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(Modifier.padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(wstecz) { Text("‹", color = Tekst, fontSize = 26.sp) }
+            Text("Dziennik zdarzeń", color = Tekst, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f))
+            TextButton({ Dziennik.wyczysc(ctx); wpisy = emptyList() }) { Text("Wyczyść", color = Akcent) }
+        }
+        Text("Najnowsze na górze. Bez treści wiadomości — tylko aplikacja i decyzja. Zrób zrzut ekranu, jeśli coś działa źle.", color = Szary, fontSize = 13.sp)
+        if (wpisy.isEmpty()) Text("Pusto — nic jeszcze nie przyszło.", color = Szary, fontSize = 14.sp)
+        LazyColumn(Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(16.dp)).background(Karta).padding(12.dp)) {
+            items(wpisy) { w ->
+                Text(
+                    w, fontSize = 12.sp, lineHeight = 16.sp,
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    color = if (w.contains("ramka:")) Color(0xFF9FC3FF) else Tekst,
+                    modifier = Modifier.padding(vertical = 3.dp)
+                )
+            }
+        }
     }
 }
 

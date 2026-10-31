@@ -2,6 +2,8 @@ package pl.oswietlenie.krawedzi
 
 import android.app.Notification
 import android.app.NotificationManager
+import android.media.AudioManager
+import android.telecom.TelecomManager
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import kotlinx.coroutines.CoroutineScope
@@ -9,6 +11,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.stateIn
 
 /**
@@ -21,29 +25,82 @@ class NasluchPowiadomien : NotificationListenerService() {
         Magazyn(this).ustawienia.stateIn(zakres, SharingStarted.Eagerly, Ustawienia())
     }
 
-    override fun onListenerConnected() { ustawienia.value }
+    override fun onListenerConnected() {
+        ustawienia.value
+        instancja = this
+        Dziennik.dodaj(this, "nasłuch powiadomień połączony")
+        wznowTu()
+    }
 
-    override fun onDestroy() { zakres.cancel(); super.onDestroy() }
+    override fun onListenerDisconnected() {
+        if (instancja === this) instancja = null
+        Dziennik.dodaj(this, "nasłuch powiadomień ROZŁĄCZONY")
+    }
+
+    override fun onDestroy() { if (instancja === this) instancja = null; zakres.cancel(); super.onDestroy() }
+
+    /**
+     * Po restarcie usługi (system, brak pamięci, aktualizacja) ramka dzwonienia znikała,
+     * choć telefon dalej dzwonił. Sprawdzamy aktywne powiadomienia i zapalamy ją znowu.
+     */
+    private fun wznowTu() {
+        zakres.launch {
+            // Prawdziwe ustawienia z dysku — zaraz po starcie stateIn ma jeszcze domyślne.
+            val u = Magazyn(this@NasluchPowiadomien).ustawienia.first()
+            if (!u.wlaczone || !u.dzwonienie) return@launch
+            val lista = runCatching { activeNotifications }.getOrNull() ?: return@launch
+            val dzwoni = lista.firstOrNull { it.packageName != packageName && Filtr.czyDzwoni(it.notification) }
+                ?: dzwonekBezKategorii(lista) ?: return@launch
+            Dziennik.dodaj(this@NasluchPowiadomien, "${opis(dzwoni)} → wciąż dzwoni, wznawiam ramkę")
+            UslugaRamki.pokaz(zdarzenie(dzwoni, ciagle = true))
+        }
+    }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         val u = ustawienia.value
-        if (!u.wlaczone || sbn.packageName == packageName) return
+        if (sbn.packageName == packageName) return
         val n = sbn.notification
+        val opis = opis(sbn)
+        if (!u.wlaczone) { zapisz("$opis → wyłączone w aplikacji"); return }
 
         if (Filtr.czyDzwoni(n)) {
-            if (u.dzwonienie) UslugaRamki.pokaz(zdarzenie(sbn, ciagle = true))
+            if (u.dzwonienie) { zapisz("$opis → DZWONI, świecę"); UslugaRamki.pokaz(zdarzenie(sbn, ciagle = true)) }
+            else zapisz("$opis → dzwoni, ale „Dzwonienie” wyłączone")
             return
         }
         // Rozmowa odebrana — to samo powiadomienie zmienia się z „dzwoni” na „trwa”.
-        if (n.category == Notification.CATEGORY_CALL) { UslugaRamki.zatrzymaj(sbn.key); return }
+        if (n.category == Notification.CATEGORY_CALL) { zapisz("$opis → rozmowa nie dzwoni, gaszę"); UslugaRamki.zatrzymaj(sbn.key); return }
 
-        if (!u.powiadomienia || !u.swieciDla(sbn.packageName)) return
-        if (!Filtr.czySwiecic(sbn, glosne(sbn.key))) return
+        val powod = when {
+            !u.powiadomienia -> "„Powiadomienia” wyłączone"
+            !u.swieciDla(sbn.packageName) -> "aplikacja niewybrana"
+            !glosne(sbn.key) -> "ciche / Nie przeszkadzać"
+            sbn.isOngoing -> "stałe (ongoing)"
+            n.flags and Notification.FLAG_GROUP_SUMMARY != 0 -> "podsumowanie grupy"
+            else -> null
+        }
+        if (powod != null) { zapisz("$opis → pomijam: $powod"); return }
+        zapisz("$opis → świecę")
         UslugaRamki.pokaz(zdarzenie(sbn, ciagle = false))
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
+        if (sbn.notification.category == Notification.CATEGORY_CALL) zapisz("${opis(sbn)} → usunięte")
         UslugaRamki.zatrzymaj(sbn.key)
+    }
+
+    private fun zapisz(t: String) = Dziennik.dodaj(this, t)
+
+    /** Krótki opis do dziennika — bez treści powiadomienia. */
+    private fun opis(sbn: StatusBarNotification): String {
+        val n = sbn.notification
+        val b = StringBuilder(sbn.packageName.substringAfterLast('.'))
+        n.category?.let { b.append(" kat=").append(it) }
+        if (n.category == Notification.CATEGORY_CALL) {
+            b.append(" typ=").append(n.extras.getInt("android.callType", 0))
+            b.append(" fs=").append(if (n.fullScreenIntent != null) "tak" else "nie")
+        }
+        return b.toString()
     }
 
     /**
@@ -73,7 +130,24 @@ class NasluchPowiadomien : NotificationListenerService() {
         )
     }
 
+    /**
+     * Aplikacja Telefon z AOSP (np. Android 12) po pokazaniu ekranu odbierania podmienia
+     * powiadomienie „dzwoni” na zwykłe, bez kategorii. Telefon dalej dzwoni — mówi to
+     * tryb dźwięku — więc bierzemy stałe powiadomienie domyślnej aplikacji Telefon.
+     */
+    private fun dzwonekBezKategorii(lista: Array<StatusBarNotification>): StatusBarNotification? {
+        val audio = getSystemService(AudioManager::class.java) ?: return null
+        if (audio.mode != AudioManager.MODE_RINGTONE) return null
+        val telefon = runCatching { getSystemService(TelecomManager::class.java)?.defaultDialerPackage }.getOrNull() ?: return null
+        return lista.firstOrNull { it.packageName == telefon && it.isOngoing }
+    }
+
     companion object {
+        @Volatile private var instancja: NasluchPowiadomien? = null
+
+        /** Wołane, gdy usługa ramki (re)startuje — jeśli coś dzwoni, ramka wraca. */
+        fun wznowDzwonienie() { instancja?.wznowTu() }
+
         const val TAG = "Krawedzie"
         const val KOLOR_DZWONIENIA = 0xFF2ED69B.toInt()
     }

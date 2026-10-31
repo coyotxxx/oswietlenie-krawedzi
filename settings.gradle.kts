@@ -7,3 +7,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "Oswietlenie Krawedzi"
 include(":app")
+include(":tester")
