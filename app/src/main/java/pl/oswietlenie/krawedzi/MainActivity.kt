@@ -172,7 +172,8 @@ private fun Glowny(
                 Text("STYL", color = Szary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 Text(nazwa(u.styl.efekt), color = Tekst, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 Text(
-                    "szerokość ${u.styl.szerokosc} · przezroczystość ${u.styl.przezroczystosc} % · ${u.styl.okres} s",
+                    (if (u.styl.efekt == Efekt.POSWIATA) "zasięg ${ZASIEG_NAZWY[u.styl.zasieg - 1]}" else "szerokość ${u.styl.szerokosc}") +
+                        " · ${PREDKOSC_NAZWY[u.styl.predkosc - 1]} · przezroczystość ${u.styl.przezroczystosc} % · ${u.styl.okres} s",
                     color = Szary, fontSize = 13.sp
                 )
             }
@@ -184,6 +185,12 @@ private fun Glowny(
             Przelacznik("Powiadomienia", "z wybranych aplikacji", u.powiadomienia) { zapisz(u.copy(powiadomienia = it)) }
             Przelacznik("Dzwonienie", "przez cały czas dzwonienia", u.dzwonienie) { zapisz(u.copy(dzwonienie = it)) }
             Przelacznik("Przy zgaszonym ekranie", "wybudź ekran na czas efektu", u.wybudzaj) { zapisz(u.copy(wybudzaj = it)) }
+            Przelacznik(
+                "Przypominaj o nieprzeczytanych",
+                if (u.przypominaj) "co ${u.przypomnienieCoMin} min · ${jakDlugo(u.przypomnienieMaksMin)}" else "ramka wraca co kilka minut na zgaszonym ekranie",
+                u.przypominaj
+            ) { zapisz(u.copy(przypominaj = it)) }
+            if (u.przypominaj) UstawieniaPrzypomnien(u, zapisz)
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -203,7 +210,7 @@ private fun Glowny(
                 val kolor = if (u.styl.kolorAuto) KolorAplikacji.ZAPASOWY else u.styl.kolor
                 UslugaRamki.pokaz(
                     Zdarzenie("proba", ctx.packageName, kolor, "Krawędzie", "Tak zaświeci przy powiadomieniu"),
-                    proba = true
+                    budz = true
                 )
             },
             modifier = Modifier.fillMaxWidth().height(54.dp),
@@ -353,7 +360,46 @@ private fun kolorySwitcha() = SwitchDefaults.colors(
     uncheckedThumbColor = Color(0xFFC7CCD4), uncheckedTrackColor = Wylaczony, uncheckedBorderColor = Wylaczony
 )
 
-private fun nazwa(e: Efekt) = when (e) { Efekt.PODSTAWOWY -> "Podstawowy"; Efekt.MIGOTANIE -> "Migotanie" }
+private fun nazwa(e: Efekt) = when (e) { Efekt.PODSTAWOWY -> "Podstawowy"; Efekt.MIGOTANIE -> "Migotanie"; Efekt.POSWIATA -> "Poświata" }
+
+private val PREDKOSC_NAZWY = listOf("bardzo wolno", "wolno", "średnio", "szybko", "bardzo szybko")
+private val ZASIEG_NAZWY = listOf("wąski", "mały", "średni", "duży", "bardzo duży")
+
+private fun jakDlugo(min: Int) = when (min) { 0 -> "aż spojrzysz"; 60 -> "przez 1 h"; 120 -> "przez 2 h"; else -> "przez $min min" }
+
+/** Rozwinięte pod przełącznikiem: co ile minut i jak długo przypominać. */
+@Composable
+private fun UstawieniaPrzypomnien(u: Ustawienia, zapisz: (Ustawienia) -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(start = 18.dp, end = 18.dp, bottom = 14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Co ile", color = Szary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        RzadChipow(Przypomnienia.CO_ILE, u.przypomnienieCoMin, { "$it min" }) { zapisz(u.copy(przypomnienieCoMin = it)) }
+        Text("Jak długo", color = Szary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        RzadChipow(Przypomnienia.JAK_DLUGO, u.przypomnienieMaksMin, { if (it == 0) "aż spojrzysz" else if (it >= 60) "${it / 60} h" else "$it min" }) {
+            zapisz(u.copy(przypomnienieMaksMin = it))
+        }
+        Text(
+            "Tylko dla powiadomień, które przyszły przy zgaszonym ekranie. Przestaje, gdy otworzysz lub odrzucisz powiadomienie albo sam włączysz ekran. " +
+                "Nie przypomina w trybie Nie przeszkadzać i w czasie rozmowy.",
+            color = Color(0xFF6E7681), fontSize = 12.sp, lineHeight = 16.sp
+        )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun RzadChipow(wartosci: List<Int>, wybrana: Int, etykieta: (Int) -> String, wybierz: (Int) -> Unit) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        wartosci.forEach { w ->
+            val tak = w == wybrana
+            Text(
+                etykieta(w), color = if (tak) Color.White else Tekst, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.clip(CircleShape).background(if (tak) Akcent else Color(0xFF0F1318))
+                    .border(1.dp, if (tak) Akcent else Linia, CircleShape)
+                    .clickable { wybierz(w) }.padding(horizontal = 14.dp, vertical = 8.dp)
+            )
+        }
+    }
+}
 
 // ───────────────────────── Podgląd ramki ─────────────────────────
 
@@ -410,25 +456,36 @@ private fun EdytorStylu(poczatek: Styl, onAnuluj: () -> Unit, onGotowe: (Styl) -
             }
 
             when (zakladka) {
-                0 -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                0 -> Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Efekt.entries.forEach { e ->
                         Column(
                             Modifier.weight(1f).clip(RoundedCornerShape(20.dp)).background(Color(0xFF0F1318))
                                 .border(2.dp, if (s.efekt == e) Akcent else Color(0xFF262C36), RoundedCornerShape(20.dp))
-                                .clickable { s = s.copy(efekt = e) }.padding(12.dp),
+                                .clickable { s = s.copy(efekt = e) }.padding(10.dp),
                             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Podglad(s.copy(efekt = e, przezroczystosc = 0), Modifier.size(70.dp), promienDp = 16f, mini = true)
-                            Text(nazwa(e), color = Tekst, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                            Podglad(s.copy(efekt = e, przezroczystosc = 0), Modifier.size(62.dp), promienDp = 16f, mini = true)
+                            Text(nazwa(e), color = Tekst, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
                         }
                     }
                 }
                 1 -> Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Row(
-                        Modifier.fillMaxWidth().clickable { s = s.copy(kolorAuto = true) },
+                    val pixel = s.efekt == Efekt.POSWIATA && s.kolorPixel
+                    if (s.efekt == Efekt.POSWIATA) Row(
+                        Modifier.fillMaxWidth().clickable { s = s.copy(kolorPixel = true) },
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        RadioButton(s.kolorAuto, { s = s.copy(kolorAuto = true) })
+                        RadioButton(pixel, { s = s.copy(kolorPixel = true) })
+                        Column {
+                            Text("Jak Pixel", color = Tekst, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                            Text("niebieski, bursztyn, zieleń i turkus", color = Szary, fontSize = 13.sp)
+                        }
+                    }
+                    Row(
+                        Modifier.fillMaxWidth().clickable { s = s.copy(kolorAuto = true, kolorPixel = false) },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(s.kolorAuto && !pixel, { s = s.copy(kolorAuto = true, kolorPixel = false) })
                         Column {
                             Text("Automatyczny", color = Tekst, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                             Text("kolor z ikony aplikacji", color = Szary, fontSize = 13.sp)
@@ -437,12 +494,12 @@ private fun EdytorStylu(poczatek: Styl, onAnuluj: () -> Unit, onGotowe: (Styl) -
                     PALETA.chunked(6).forEach { wiersz ->
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             wiersz.forEach { k ->
-                                val wybrany = !s.kolorAuto && s.kolor == k
+                                val wybrany = !s.kolorAuto && !pixel && s.kolor == k
                                 Box(
                                     Modifier.weight(1f).aspectRatio(1f).clip(CircleShape)
                                         .border(3.dp, if (wybrany) Color.White else Color.Transparent, CircleShape)
                                         .padding(4.dp).clip(CircleShape).background(Color(k))
-                                        .clickable { s = s.copy(kolorAuto = false, kolor = k) }
+                                        .clickable { s = s.copy(kolorAuto = false, kolor = k, kolorPixel = false) }
                                 )
                             }
                         }
@@ -450,8 +507,11 @@ private fun EdytorStylu(poczatek: Styl, onAnuluj: () -> Unit, onGotowe: (Styl) -
                 }
                 else -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Suwak("Przezroczystość", "${s.przezroczystosc} %", s.przezroczystosc, Styl.PRZEZROCZYSTOSC, 10) { s = s.copy(przezroczystosc = it) }
-                    Suwak("Szerokość", "${s.szerokosc}", s.szerokosc, Styl.SZEROKOSC, 1) { s = s.copy(szerokosc = it) }
+                    if (s.efekt == Efekt.POSWIATA)
+                        Suwak("Zasięg", ZASIEG_NAZWY[s.zasieg - 1], s.zasieg, Styl.ZASIEG, 1) { s = s.copy(zasieg = it) }
+                    else Suwak("Szerokość", "${s.szerokosc}", s.szerokosc, Styl.SZEROKOSC, 1) { s = s.copy(szerokosc = it) }
                     Suwak("Okres", "${s.okres} s", s.okres, Styl.OKRES, 1) { s = s.copy(okres = it) }
+                    Suwak("Prędkość", PREDKOSC_NAZWY[s.predkosc - 1], s.predkosc, Styl.PREDKOSC, 1) { s = s.copy(predkosc = it) }
                 }
             }
 

@@ -3,7 +3,10 @@ package pl.oswietlenie.krawedzi
 import android.accessibilityservice.AccessibilityService
 import android.annotation.SuppressLint
 import android.app.ActivityOptions
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.PixelFormat
 import android.media.AudioManager
 import android.os.Build
@@ -57,11 +60,22 @@ class UslugaRamki : AccessibilityService() {
         }
     }
 
+    /**
+     * Sam włączyłeś ekran — widziałeś ekran blokady, więc przypomnienia już niepotrzebne.
+     * Ekran zapalony przez nas (obudzilismy) się nie liczy.
+     */
+    private val ekranWlaczony = object : BroadcastReceiver() {
+        override fun onReceive(c: Context, i: Intent) {
+            if (!obudzilismy) Przypomnienia.wyczysc(this@UslugaRamki, "włączono ekran")
+        }
+    }
+
     private val koniec = Runnable { Dziennik.dodaj(this, "  ramka: zgaszona — minął czas"); schowaj(zablokuj = true) }
 
     override fun onServiceConnected() {
         instancja = this
         Dziennik.dodaj(this, "usługa ramki uruchomiona")
+        runCatching { registerReceiver(ekranWlaczony, IntentFilter(Intent.ACTION_SCREEN_ON)) }
         NasluchPowiadomien.wznowDzwonienie()
         ustawienia.value
     }
@@ -72,12 +86,13 @@ class UslugaRamki : AccessibilityService() {
     override fun onDestroy() {
         if (instancja === this) instancja = null
         Dziennik.dodaj(this, "usługa ramki zatrzymana")
+        runCatching { unregisterReceiver(ekranWlaczony) }
         schowaj(zablokuj = false)
         zakres.cancel()
         super.onDestroy()
     }
 
-    private fun pokazTu(z: Zdarzenie, proba: Boolean) {
+    private fun pokazTu(z: Zdarzenie, budz: Boolean) {
         val u = ustawienia.value
         Log.d(NasluchPowiadomien.TAG, "pokaz ${z.pakiet} ciagle=${z.ciagle} ekranWl=${(getSystemService(Context.POWER_SERVICE) as PowerManager).isInteractive}")
         // Dzwonienie ma pierwszeństwo — zwykłe powiadomienie go nie przerywa.
@@ -91,7 +106,7 @@ class UslugaRamki : AccessibilityService() {
             // Dzwonienie: ekran zapala aplikacja Telefon i pokazuje Odbierz/Odrzuć.
             // Nie budzimy go i nie kładziemy czarnego tła — zasłoniłoby przyciski.
             if (obudzilismy) { budzik?.let { if (it.isHeld) it.release() }; budzik = null; obudzilismy = false }
-        } else if (zgaszony && (u.wybudzaj || proba)) obudz(pm)
+        } else if (zgaszony && (u.wybudzaj || budz)) obudz(pm)
         Dziennik.dodaj(this, "  ramka: zapalona" + (if (z.ciagle) " (dzwonienie)" else "") +
             (if (zgaszony) ", ekran był zgaszony" else "") + (if (obudzilismy) ", obudziłem ekran" else ""))
 
@@ -131,6 +146,7 @@ class UslugaRamki : AccessibilityService() {
     private fun otworz(z: Zdarzenie) {
         Dziennik.dodaj(this, "  ramka: zgaszona — dotknięcie, otwieram")
         obudzilismy = false   // użytkownik sięgnął po telefon — nie gasimy mu ekranu
+        Przypomnienia.wyczysc(this, "dotknięto ramki")
         schowaj(zablokuj = false)
         // Android 14+ blokuje start aktywności z cudzego PendingIntent, jeśli wysyłający
         // wprost na to nie pozwoli — bez tego dotknięcie gasiło ramkę, ale nic nie otwierało.
@@ -191,10 +207,12 @@ class UslugaRamki : AccessibilityService() {
         const val ZAPASOWY_PROMIEN_DP = 36f
 
         val dziala: Boolean get() = instancja != null
+        val swieci: Boolean get() = instancja?.biezace != null
 
-        fun pokaz(z: Zdarzenie, proba: Boolean = false) {
+        /** @param budz obudź zgaszony ekran nawet przy wyłączonym „Przy zgaszonym ekranie” (próba, przypomnienie) */
+        fun pokaz(z: Zdarzenie, budz: Boolean = false) {
             val s = instancja ?: return
-            s.glowny.post { s.pokazTu(z, proba) }
+            s.glowny.post { s.pokazTu(z, budz) }
         }
 
         fun zatrzymaj(klucz: String) {

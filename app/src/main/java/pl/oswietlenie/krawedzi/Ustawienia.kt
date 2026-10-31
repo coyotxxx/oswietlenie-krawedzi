@@ -10,13 +10,17 @@ import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
-enum class Efekt { PODSTAWOWY, MIGOTANIE }
+enum class Efekt { PODSTAWOWY, MIGOTANIE, POSWIATA }
 
 /**
  * Wygląd ramki. Te same pola co trzy zakładki Samsunga: Efekty, Kolor, Zaawansowane.
  *
  * [okres] to czas świecenia przy powiadomieniu w sekundach — u Samsunga suwak „Okres”
  * od Krótko do Długo. Dzwonienie świeci tak długo, jak dzwoni, niezależnie od okresu.
+ *
+ * [predkosc] 1..5 — tempo animacji każdego efektu (pulsowania, obrotu tęczy, wędrówki kolorów poświaty).
+ * [zasieg] 1..5 — jak daleko w głąb ekranu sięga [Efekt.POSWIATA].
+ * [kolorPixel] — poświata w kolorach jak na Pixelu; gdy wyłączone, bierze [kolorAuto] / [kolor].
  */
 data class Styl(
     val efekt: Efekt = Efekt.MIGOTANIE,
@@ -24,12 +28,17 @@ data class Styl(
     val kolor: Int = 0xFF3D9BFF.toInt(),
     val przezroczystosc: Int = 0,   // 0..80 %
     val szerokosc: Int = 5,         // dp, 2..14
-    val okres: Int = 5              // s, 2..10
+    val okres: Int = 5,             // s, 2..10
+    val predkosc: Int = 3,          // 1..5
+    val zasieg: Int = 3,            // 1..5
+    val kolorPixel: Boolean = true
 ) {
     companion object {
         val PRZEZROCZYSTOSC = 0..80
         val SZEROKOSC = 2..14
         val OKRES = 2..10
+        val PREDKOSC = 1..5
+        val ZASIEG = 1..5
     }
 }
 
@@ -40,7 +49,11 @@ data class Ustawienia(
     val wybudzaj: Boolean = true,
     val wszystkieAplikacje: Boolean = true,
     val wybrane: Set<String> = emptySet(),
-    val styl: Styl = Styl()
+    val styl: Styl = Styl(),
+    val przypominaj: Boolean = true,
+    val przypomnienieCoMin: Int = 5,
+    /** Jak długo przypominać o jednym powiadomieniu, w minutach. 0 = aż spojrzysz na telefon. */
+    val przypomnienieMaksMin: Int = 0
 ) {
     fun swieciDla(pakiet: String) = wszystkieAplikacje || pakiet in wybrane
 }
@@ -62,6 +75,12 @@ class Magazyn(private val ctx: Context) {
         val przezr = intPreferencesKey("przezroczystosc")
         val szer = intPreferencesKey("szerokosc")
         val okres = intPreferencesKey("okres")
+        val predkosc = intPreferencesKey("predkosc")
+        val zasieg = intPreferencesKey("zasieg")
+        val kolorPixel = booleanPreferencesKey("kolor_pixel")
+        val przypominaj = booleanPreferencesKey("przypominaj")
+        val przypCo = intPreferencesKey("przypomnienie_co")
+        val przypMaks = intPreferencesKey("przypomnienie_maks")
     }
 
     val ustawienia: Flow<Ustawienia> = ctx.magazyn.data.map { p ->
@@ -79,8 +98,14 @@ class Magazyn(private val ctx: Context) {
                 kolor = p[K.kolor] ?: d.styl.kolor,
                 przezroczystosc = (p[K.przezr] ?: d.styl.przezroczystosc).coerceIn(Styl.PRZEZROCZYSTOSC),
                 szerokosc = (p[K.szer] ?: d.styl.szerokosc).coerceIn(Styl.SZEROKOSC),
-                okres = (p[K.okres] ?: d.styl.okres).coerceIn(Styl.OKRES)
-            )
+                okres = (p[K.okres] ?: d.styl.okres).coerceIn(Styl.OKRES),
+                predkosc = (p[K.predkosc] ?: d.styl.predkosc).coerceIn(Styl.PREDKOSC),
+                zasieg = (p[K.zasieg] ?: d.styl.zasieg).coerceIn(Styl.ZASIEG),
+                kolorPixel = p[K.kolorPixel] ?: d.styl.kolorPixel
+            ),
+            przypominaj = p[K.przypominaj] ?: d.przypominaj,
+            przypomnienieCoMin = (p[K.przypCo] ?: d.przypomnienieCoMin).takeIf { it in Przypomnienia.CO_ILE } ?: d.przypomnienieCoMin,
+            przypomnienieMaksMin = (p[K.przypMaks] ?: d.przypomnienieMaksMin).takeIf { it in Przypomnienia.JAK_DLUGO } ?: d.przypomnienieMaksMin
         )
     }
 
@@ -98,6 +123,12 @@ class Magazyn(private val ctx: Context) {
             p[K.przezr] = u.styl.przezroczystosc
             p[K.szer] = u.styl.szerokosc
             p[K.okres] = u.styl.okres
+            p[K.predkosc] = u.styl.predkosc
+            p[K.zasieg] = u.styl.zasieg
+            p[K.kolorPixel] = u.styl.kolorPixel
+            p[K.przypominaj] = u.przypominaj
+            p[K.przypCo] = u.przypomnienieCoMin
+            p[K.przypMaks] = u.przypomnienieMaksMin
         }
     }
 }

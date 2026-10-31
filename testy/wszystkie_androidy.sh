@@ -1,6 +1,6 @@
 #!/bin/bash
 # Uruchamia macierz testów kolejno na emulatorach z różnymi wersjami Androida.
-# Użycie: testy/wszystkie_androidy.sh "36 35 33 31"
+# Użycie: testy/wszystkie_androidy.sh "36 35 33 31" [p1,d8]   (drugi argument: tylko te testy)
 set -u
 export ANDROID_HOME=/home/debian/Android/Sdk ANDROID_SDK_ROOT=/home/debian/Android/Sdk
 export TMPDIR=/home/debian/tmp HOME=/home/debian
@@ -27,7 +27,7 @@ for API in ${1:-36 35 33 31}; do
   # Pierwsze uruchomienie aplikacji — tworzy ustawienia.
   $ADB -s $SERIAL shell am start -n pl.oswietlenie.krawedzi/.MainActivity >/dev/null; sleep 4
   $ADB -s $SERIAL shell input keyevent KEYCODE_HOME
-  python3 "$REPO/testy/macierz.py" $SERIAL /home/debian/tmp/krawedzie-testy/a$API
+  python3 "$REPO/testy/macierz.py" $SERIAL /home/debian/tmp/krawedzie-testy/a$API${2:+-powt} ${2:-}
   $ADB -s $SERIAL emu kill
   wait $EMU 2>/dev/null
   sleep 5

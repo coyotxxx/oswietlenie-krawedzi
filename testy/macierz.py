@@ -167,11 +167,12 @@ def stuknij_tekst(tekst, dokladnie=False):
 
 def widac_odbieranie():
     """Ekran odbierania: pełnoekranowy (InCallActivity) albo baner z przyciskami Odbierz/Odrzuć."""
-    for _ in range(3):
+    for _ in range(6):
         if "InCall" in fokus():
             return True
         r = ui()
-        if r is not None and any((n.get("text") or n.get("content-desc") or "") in ("Answer", "Odbierz") or "to answer" in (n.get("text") or "") for n in r.iter("node")):
+        if r is not None and any(any(w in ((n.get("text") or "") + " " + (n.get("content-desc") or "")) for w in ("Answer", "Odbierz", "to answer"))
+                                 for n in r.iter("node")):
             return True
         czekaj(1)
     return False
@@ -214,7 +215,12 @@ def przelacznik(tytul, wlaczony):
 
 def wszystkie_aplikacje(wlaczone):
     otworz_aplikacje()
-    stuknij_tekst("Aplikacje", dokladnie=True)
+    # Od 0.3.0 wiersz „Aplikacje” bywa poniżej ekranu (sekcja przypomnień) — przewijamy.
+    for _ in range(3):
+        if stuknij_tekst("Aplikacje", dokladnie=True):
+            break
+        sh("input swipe 540 1500 540 700 300")
+        czekaj(1)
     czekaj(2)
     r = ui()
     ok = False
@@ -235,6 +241,74 @@ def wszystkie_aplikacje(wlaczone):
     sh("input keyevent KEYCODE_HOME")
     czekaj(1)
     return ok
+
+
+def efekt(nazwa):
+    """Wybiera efekt w edytorze stylu i zapisuje. Sukces = karta stylu na ekranie głównym pokazuje ten efekt."""
+    for _ in range(2):
+        otworz_aplikacje()
+        stuknij_tekst("STYL", dokladnie=True)
+        czekaj(1.5)
+        stuknij_tekst(nazwa, dokladnie=True)
+        czekaj(1)
+        stuknij_tekst("Gotowe", dokladnie=True)
+        czekaj(1.5)
+        r = ui()
+        ok = r is not None and any((n.get("text") or "") == nazwa for n in r.iter("node"))
+        sh("input keyevent KEYCODE_HOME")
+        czekaj(1)
+        if ok:
+            return True
+    return False
+
+
+def predkosc_max():
+    """Przesuwa suwak „Prędkość” na koniec; zwraca podpis z karty stylu na ekranie głównym."""
+    otworz_aplikacje()
+    stuknij_tekst("STYL", dokladnie=True)
+    czekaj(1.5)
+    stuknij_tekst("Zaawans.", dokladnie=True)
+    czekaj(1)
+    r = ui()
+    etyk = next((n for n in r.iter("node") if (n.get("text") or "") == "Prędkość"), None) if r is not None else None
+    if etyk is None:
+        return ""
+    x1, y1, x2, y2 = granice(etyk)
+    szer = int(re.findall(r"size: (\d+)x", sh("wm size"))[-1])   # „Override size” ma pierwszeństwo
+    y = y2 + (y2 - y1) + 10
+    sh(f"input swipe {szer // 2} {y} {szer - 10} {y} 600")   # przeciągnięcie do końca suwaka
+    czekaj(1)
+    stuknij_tekst("Gotowe", dokladnie=True)
+    czekaj(1.5)
+    r = ui()
+    opis = next((n.get("text") for n in r.iter("node") if "przezroczystość" in (n.get("text") or "")), "") if r is not None else ""
+    sh("input keyevent KEYCODE_HOME")
+    czekaj(1)
+    return opis
+
+
+def przypomnienie_co(etykieta):
+    otworz_aplikacje()
+    for _ in range(3):
+        if stuknij_tekst(etykieta, dokladnie=True):
+            czekaj(1)
+            sh("input keyevent KEYCODE_HOME")
+            czekaj(1)
+            return True
+        sh("input swipe 540 1500 540 700 300")
+        czekaj(1)
+    return False
+
+
+def ramka_w_oknie(od, do, start):
+    """Czy ramka z czarnym tłem pojawiła się między `od` a `do` sekund od `start`."""
+    while time.time() - start < od:
+        czekaj(1)
+    while time.time() - start < do:
+        if ramka() == "z_tlem":
+            return True
+        czekaj(1.5)
+    return False
 
 
 # ───────── testy ─────────
@@ -508,7 +582,10 @@ def d8(u):
     czekaj(1.2)
     a = sprawdz(u, ramka() == "z_tlem", "powiadomienie z tłem")
     dzwon()
-    czekaj(3)
+    # Emulator A16 zgłasza dzwonienie w „Telefonie” 2–4,5 s po `gsm call` — czekamy do 8 s.
+    start = time.time()
+    while time.time() - start < 8 and ramka() != "przezroczysta":
+        czekaj(0.5)
     b = sprawdz(u, ramka() == "przezroczysta", "przy dzwonieniu tło znika")
     c = sprawdz(u, widac_odbieranie(), "widać Odbierz/Odrzuć")
     zrzut("D8_dzwonienie_po_powiadomieniu")
@@ -597,6 +674,126 @@ def r1(u):
     return a
 
 
+@test("E1", "Efekt Poświata — powiadomienie przy zgaszonym ekranie")
+def e1(u):
+    a = sprawdz(u, efekt("Poświata"), "wybrano Poświatę w edytorze")
+    uspij()
+    wyslij("zwykle")
+    czekaj(1.5)
+    b = sprawdz(u, ramka() == "z_tlem", "świeci z czarnym tłem")
+    zrzut("E1_poswiata_powiadomienie")
+    czekaj(6.5)
+    c = sprawdz(u, ramka() is None, "zgasła po 5 s")
+    return a and b and c
+
+
+@test("E2", "Efekt Poświata — dzwonienie przy zgaszonym ekranie")
+def e2(u):
+    uspij()
+    dzwon()
+    czekaj(3)
+    a = sprawdz(u, ramka() == "przezroczysta", "świeci bez czarnego tła")
+    b = sprawdz(u, widac_odbieranie(), "widać ekran odbierania")
+    zrzut("E2_poswiata_dzwonienie")
+    rozlacz()
+    czekaj(2.5)
+    return a and b
+
+
+@test("E3", "Suwak Prędkość zapisuje się")
+def e3(u):
+    opis = predkosc_max()
+    return sprawdz(u, "bardzo szybko" in opis, f"karta stylu: „{opis}”")
+
+
+@test("Z1", "Przypomnienie co 1 min przy zgaszonym ekranie")
+def z1(u):
+    a = sprawdz(u, przypomnienie_co("1 min"), "ustawiono co 1 min")
+    uspij()
+    z = Znacznik()
+    start = time.time()
+    wyslij("zwykle")
+    czekaj(8)
+    b = sprawdz(u, ramka() is None and ekran() != "Awake", "pierwsza ramka zgasła, ekran zgaszony")
+    c = sprawdz(u, ramka_w_oknie(50, 80, start), "po ~1 min ramka wróciła na czarnym ekranie")
+    zrzut("Z1_przypomnienie")
+    d = sprawdz(u, any("przypomnienie: świecę" in w for w in z.nowe()), "dziennik: przypomnienie")
+    czekaj(7)
+    e = sprawdz(u, ekran() != "Awake", "po przypomnieniu ekran znów zgaszony")
+    return a and b and c and d and e
+
+
+@test("Z2", "Przypomnienie w głębokim uśpieniu (Doze), bez wyjątku baterii")
+def z2(u):
+    sh(f"dumpsys deviceidle whitelist -{PKG}")
+    sh("dumpsys battery unplug")
+    uspij()
+    start = time.time()
+    wyslij("zwykle")
+    czekaj(8)
+    stan = sh("dumpsys deviceidle force-idle").strip()
+    a = sprawdz(u, "idle" in stan.lower(), f"Doze włączony ({stan[:40]})")
+    b = sprawdz(u, ramka_w_oknie(50, 100, start), "przypomnienie przyszło mimo Doze")
+    sh("dumpsys deviceidle unforce")
+    sh("dumpsys battery reset")
+    sh(f"dumpsys deviceidle whitelist +{PKG}")
+    return a and b
+
+
+@test("Z3", "Powiadomienie usunięte → koniec przypomnień")
+def z3(u):
+    uspij()
+    z = Znacznik()
+    start = time.time()
+    wyslij("zwykle")
+    czekaj(8)
+    anuluj(1)
+    czekaj(2)
+    a = sprawdz(u, any("powiadomienie usunięte" in w for w in z.nowe()), "dziennik: koniec — usunięte")
+    b = sprawdz(u, not ramka_w_oknie(10, 80, start), "brak przypomnienia")
+    return a and b
+
+
+@test("Z4", "Sam włączasz ekran → koniec przypomnień")
+def z4(u):
+    uspij()
+    z = Znacznik()
+    start = time.time()
+    wyslij("zwykle")
+    czekaj(8)
+    sh("input keyevent KEYCODE_WAKEUP")
+    czekaj(2)
+    a = sprawdz(u, any("włączono ekran" in w for w in z.nowe()), "dziennik: koniec — włączono ekran")
+    uspij()
+    b = sprawdz(u, not ramka_w_oknie(12, 80, start), "brak przypomnienia")
+    return a and b
+
+
+@test("Z5", "Przypominanie WYŁ. → brak przypomnień")
+def z5(u):
+    a = sprawdz(u, przelacznik("Przypominaj o nieprzeczytanych", False), "wyłączono przypominanie")
+    uspij()
+    z = Znacznik()
+    start = time.time()
+    wyslij("zwykle")
+    czekaj(8)
+    b = sprawdz(u, not any("przypomnę" in w for w in z.nowe()), "nic nie zaplanowano")
+    c = sprawdz(u, not ramka_w_oknie(10, 75, start), "brak przypomnienia")
+    obudz_odblokuj()
+    przelacznik("Przypominaj o nieprzeczytanych", True)
+    return a and b and c
+
+
+@test("Z6", "Powiadomienie przy włączonym ekranie → bez przypomnień")
+def z6(u):
+    z = Znacznik()
+    wyslij("zwykle")
+    czekaj(2)
+    a = sprawdz(u, not any("przypomnę" in w for w in z.nowe()), "nic nie zaplanowano")
+    przypomnienie_co("5 min")
+    return a
+
+
 def przygotuj():
     sh(f"pm grant {TESTER} android.permission.POST_NOTIFICATIONS")
     sh(f"appops set {PKG} ACCESS_RESTRICTED_SETTINGS allow")
@@ -614,7 +811,8 @@ if __name__ == "__main__":
     wersja = re.search(r"versionName=(\S+)", sh(f"dumpsys package {PKG}"))
     sdk = sh("getprop ro.build.version.release").strip()
     print(f"Krawędzie {wersja.group(1) if wersja else '?'} na Androidzie {sdk} ({SERIAL})", flush=True)
-    wszystkie = [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, d1, d2, d3, d4, d5, d6, d7, d8, v1, v2, v3, v4, r1, r2]
+    wszystkie = [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, d1, d2, d3, d4, d5, d6, d7, d8, v1, v2, v3, v4, r1, r2,
+                 e1, e2, e3, z1, z2, z3, z4, z5, z6]
     wybrane = set(sys.argv[3].split(",")) if len(sys.argv) > 3 else None
     for t in wszystkie:
         if wybrane is None or t.__name__ in wybrane:

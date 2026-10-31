@@ -3,6 +3,7 @@ package pl.oswietlenie.krawedzi
 import android.app.Notification
 import android.app.NotificationManager
 import android.media.AudioManager
+import android.os.PowerManager
 import android.telecom.TelecomManager
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
@@ -47,6 +48,7 @@ class NasluchPowiadomien : NotificationListenerService() {
         zakres.launch {
             // Prawdziwe ustawienia z dysku — zaraz po starcie stateIn ma jeszcze domyślne.
             val u = Magazyn(this@NasluchPowiadomien).ustawienia.first()
+            Przypomnienia.wznow(this@NasluchPowiadomien, u)
             if (!u.wlaczone || !u.dzwonienie) return@launch
             val lista = runCatching { activeNotifications }.getOrNull() ?: return@launch
             val dzwoni = lista.firstOrNull { it.packageName != packageName && Filtr.czyDzwoni(it.notification) }
@@ -82,11 +84,18 @@ class NasluchPowiadomien : NotificationListenerService() {
         if (powod != null) { zapisz("$opis → pomijam: $powod"); return }
         zapisz("$opis → świecę")
         UslugaRamki.pokaz(zdarzenie(sbn, ciagle = false))
+        // Przyszło przy zgaszonym ekranie — nie widziałeś go, więc będziemy przypominać.
+        val ekranWl = getSystemService(PowerManager::class.java)?.isInteractive != false
+        if (u.przypominaj && !ekranWl) {
+            Przypomnienia.dodaj(this, sbn.key, u.przypomnienieCoMin)
+            zapisz("  przypomnę co ${u.przypomnienieCoMin} min")
+        }
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
         if (sbn.notification.category == Notification.CATEGORY_CALL) zapisz("${opis(sbn)} → usunięte")
         UslugaRamki.zatrzymaj(sbn.key)
+        Przypomnienia.usun(this, sbn.key)
     }
 
     private fun zapisz(t: String) = Dziennik.dodaj(this, t)
@@ -147,6 +156,18 @@ class NasluchPowiadomien : NotificationListenerService() {
 
         /** Wołane, gdy usługa ramki (re)startuje — jeśli coś dzwoni, ramka wraca. */
         fun wznowDzwonienie() { instancja?.wznowTu() }
+
+        /** Klucze powiadomień na pasku; null, gdy nasłuch nie jest połączony. */
+        fun aktywneKlucze(): Set<String>? =
+            instancja?.let { s -> runCatching { s.activeNotifications.map { it.key }.toSet() }.getOrNull() }
+
+        /** Zapala ramkę przypomnienia dla powiadomienia o kluczu [klucz]. */
+        fun przypomnij(klucz: String): Boolean {
+            val s = instancja ?: return false
+            val sbn = runCatching { s.activeNotifications.firstOrNull { it.key == klucz } }.getOrNull() ?: return false
+            UslugaRamki.pokaz(s.zdarzenie(sbn, ciagle = false), budz = true)
+            return true
+        }
 
         const val TAG = "Krawedzie"
         const val KOLOR_DZWONIENIA = 0xFF2ED69B.toInt()

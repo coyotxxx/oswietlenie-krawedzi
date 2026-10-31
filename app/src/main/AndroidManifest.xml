@@ -8,6 +8,10 @@
     <!-- Aktualizacje z wydań na GitHubie -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Przypomnienia co kilka minut także w głębokim uśpieniu telefonu (Doze).
+         Android 12: zgoda domyślnie przyznana; 13+: USE_EXACT_ALARM bez pytania. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
 
     <!-- Lista aplikacji do wyboru (Android 11+ ukrywa je bez tego) -->
     <queries>
@@ -38,6 +42,11 @@
         <!-- Wynik instalacji aktualizacji (sesja PackageInstaller) -->
         <receiver
             android:name=".OdbiorcaInstalacji"
+            android:exported="false" />
+
+        <!-- Budzik przypomnień o nieprzeczytanych powiadomieniach -->
+        <receiver
+            android:name=".Przypominacz"
             android:exported="false" />
 
         <!-- Dowiaduje się o powiadomieniach i dzwonieniu -->
